@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from torch import nn
+from torch.hub import load_state_dict_from_url
 from transformers import BertModel, BertTokenizer
 
 from .vit import VisionTransformer
@@ -29,11 +30,11 @@ class CLIP(nn.Module):
             depth               = vision_layers,
             num_heads           = vision_heads,
         )
-        self.visual.load_state_dict(torch.load("model_data/vit-32.pth"), strict=False)
+        self.visual.load_state_dict(load_state_dict_from_url("https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/VIT-32.pth", model_dir="model_data"), strict=False)
         self.visual.head = nn.Linear(self.visual.num_features, embed_dim)
 
-        self.tokenizer          = BertTokenizer.from_pretrained("model_data/chinese_wwm_ext_pytorch")
-        self.text               = BertModel.from_pretrained("model_data/chinese_wwm_ext_pytorch")
+        self.tokenizer          = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext", cache_dir='model_data')
+        self.text               = BertModel.from_pretrained("hfl/chinese-bert-wwm-ext", cache_dir='model_data')
         transformer_width       = self.text.config.hidden_size
         self.ln_final           = nn.LayerNorm(transformer_width)
         self.text_projection    = nn.Parameter(torch.empty(transformer_width, embed_dim))
