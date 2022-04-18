@@ -4,6 +4,7 @@ import os
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
+import torch.distributed as dist
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
@@ -19,6 +20,23 @@ if __name__ == "__main__":
     #   没有GPU可以设置成False
     #----------------------------------------#
     Cuda                = True
+    #---------------------------------------------------------------------#
+    #   distributed     用于指定是否使用单机多卡分布式运行
+    #                   终端指令仅支持Ubuntu。CUDA_VISIBLE_DEVICES用于在Ubuntu下指定显卡。
+    #                   Windows系统下默认使用DP模式调用所有显卡，不支持DDP。
+    #   DP模式：
+    #       设置            distributed = False
+    #       在终端中输入    CUDA_VISIBLE_DEVICES=0,1 python train.py
+    #   DDP模式：
+    #       设置            distributed = True
+    #       在终端中输入    CUDA_VISIBLE_DEVICES=0,1 python -m torch.distributed.launch --nproc_per_node=2 train.py
+    #---------------------------------------------------------------------#
+    distributed     = False
+    #---------------------------------------------------------------------#
+    #   fp16        是否使用混合精度训练
+    #               可减少约一半的显存、需要pytorch1.7.1以上
+    #---------------------------------------------------------------------#
+    fp16            = False
     #----------------------------------------#
     #   进行文本-图片特征比较时的特征长度
     #----------------------------------------#
@@ -26,7 +44,7 @@ if __name__ == "__main__":
     #----------------------------------------#
     #   输入图片的大小
     #----------------------------------------#
-    image_resolution    = 224
+    input_shape         = [224, 224]
     #----------------------------------------#
     #   训练集最长的文本长度
     #----------------------------------------#
@@ -86,7 +104,7 @@ if __name__ == "__main__":
     Init_lr             = 1e-4
     Min_lr              = Init_lr * 0.01
     #------------------------------------------------------------------#
-    #   optimizer_type  使用到的优化器种类，建议设置为AdamW和Adam
+    #   optimizer_type  使用到的优化器种类，可使用的有adamw，adam
     #   momentum        优化器内部使用到的momentum参数
     #   weight_decay    权值衰减，可防止过拟合
     #                   adam会导致weight_decay错误，使用adam时建议设置为0。
@@ -119,24 +137,67 @@ if __name__ == "__main__":
     #------------------------------------------------------#
     datasets_path       = "datasets"
     
+    #------------------------------------------------------#
+    #   设置用到的显卡
+    #------------------------------------------------------#
+    ngpus_per_node  = torch.cuda.device_count()
+    if distributed:
+        dist.init_process_group(backend="nccl")
+        local_rank  = int(os.environ["LOCAL_RANK"])
+        rank        = int(os.environ["RANK"])
+        device      = torch.device("cuda", local_rank)
+        if local_rank == 0:
+            print(f"[{os.getpid()}] (rank = {rank}, local_rank = {local_rank}) training...")
+            print("Gpu Device Count : ", ngpus_per_node)
+    else:
+        device          = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        local_rank      = 0
+        rank            = 0
+    
     model = CLIP(
         embed_dim           = 512, 
-        image_resolution    = image_resolution, 
+        input_shape         = input_shape, 
         context_length      = context_length,
     )
     if model_path != '':
-        #------------------------------------------------------#
-        #   载入预训练权重
-        #------------------------------------------------------#
-        print('Load weights {}.'.format(model_path))
-        model.load_weights(model_path, by_name=True, skip_mismatch=True)
+        if local_rank == 0:
+            #------------------------------------------------------#
+            #   权值文件请看README，百度网盘下载
+            #------------------------------------------------------#
+            print('Load weights {}.'.format(model_path))
+        model_dict      = model.state_dict()
+        pretrained_dict = torch.load(model_path, map_location = device)
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) == np.shape(v)}
+        model_dict.update(pretrained_dict)
+        model.load_state_dict(model_dict)
     
-    loss_history    = LossHistory(save_dir, model, input_shape=[image_resolution, image_resolution])
+    if local_rank == 0:
+        loss_history = LossHistory(save_dir, model, input_shape=input_shape)
+    else:
+        loss_history = None
+        
+    if fp16:
+        #------------------------------------------------------------------#
+        #   torch 1.2不支持amp，建议使用torch 1.7.1及以上正确使用fp16
+        #   因此torch1.2这里显示"could not be resolve"
+        #------------------------------------------------------------------#
+        from torch.cuda.amp import GradScaler as GradScaler
+        scaler = GradScaler()
+    else:
+        scaler = None
+
     model_train     = model.train()
     if Cuda:
-        model_train = torch.nn.DataParallel(model)
-        cudnn.benchmark = True
-        model_train = model_train.cuda()
+        if distributed:
+            #----------------------------#
+            #   多卡平行运行
+            #----------------------------#
+            model_train = model_train.cuda(local_rank)
+            model_train = torch.nn.parallel.DistributedDataParallel(model_train, device_ids=[local_rank], find_unused_parameters=True)
+        else:
+            model_train = torch.nn.DataParallel(model)
+            cudnn.benchmark = True
+            model_train = model_train.cuda()
         
     train_lines = json.load(open(os.path.join(datasets_path, "train.json"), mode = 'r', encoding = 'utf-8'))
     val_lines   = json.load(open(os.path.join(datasets_path, "val.json"), mode = 'r', encoding = 'utf-8'))
@@ -145,19 +206,27 @@ if __name__ == "__main__":
     num_val     = len(val_lines)
 
     if True:
+        #-------------------------------------------------------------------#
+        #   判断当前batch_size，自适应调整学习率
+        #-------------------------------------------------------------------#
+        nbs             = 64
+        lr_limit_max    = 1e-4
+        lr_limit_min    = 3e-5
+        Init_lr_fit     = min(max(batch_size / nbs * Init_lr, lr_limit_min), lr_limit_max)
+        Min_lr_fit      = min(max(batch_size / nbs * Min_lr, lr_limit_min * 1e-2), lr_limit_max * 1e-2)
+
         #---------------------------------------#
         #   根据optimizer_type选择优化器
         #---------------------------------------#
         optimizer = {
-            'adamw' : optim.AdamW(model.parameters(), Init_lr, betas = (momentum, 0.999), weight_decay = weight_decay),
-            'adam'  : optim.Adam(model.parameters(), Init_lr, betas = (momentum, 0.999), weight_decay = weight_decay),
-            'sgd'   : optim.SGD(model.parameters(), Init_lr, momentum=momentum, nesterov=True, weight_decay = weight_decay)
+            'adamw' : optim.AdamW(model.parameters(), Init_lr_fit, betas = (momentum, 0.999), weight_decay = weight_decay),
+            'adam'  : optim.Adam(model.parameters(), Init_lr_fit, betas = (momentum, 0.999), weight_decay = weight_decay),
         }[optimizer_type]
 
         #---------------------------------------#
         #   获得学习率下降的公式
         #---------------------------------------#
-        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr, Min_lr, Epoch)
+        lr_scheduler_func = get_lr_scheduler(lr_decay_type, Init_lr_fit, Min_lr_fit, Epoch)
         
         #---------------------------------------#
         #   判断每一个世代的长度
@@ -171,17 +240,31 @@ if __name__ == "__main__":
         #---------------------------------------#
         #   构建数据集加载器
         #---------------------------------------#
-        train_dataset   = ClipDataset([image_resolution, image_resolution], train_lines, datasets_path, random = True)
-        val_dataset     = ClipDataset([image_resolution, image_resolution], val_lines, datasets_path, random = False)
+        train_dataset   = ClipDataset(input_shape, train_lines, datasets_path, random = True)
+        val_dataset     = ClipDataset(input_shape, val_lines, datasets_path, random = False)
+        
+        if distributed:
+            train_sampler   = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True,)
+            val_sampler     = torch.utils.data.distributed.DistributedSampler(val_dataset, shuffle=False,)
+            batch_size      = batch_size // ngpus_per_node
+            shuffle         = False
+        else:
+            train_sampler   = None
+            val_sampler     = None
+            shuffle         = True
 
-        gen             = DataLoader(train_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
-                                drop_last=True, collate_fn=dataset_collate)
-        gen_val         = DataLoader(val_dataset, shuffle=True, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
-                                drop_last=True, collate_fn=dataset_collate)
+        gen             = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                                drop_last=True, collate_fn=dataset_collate, sampler=train_sampler)
+        gen_val         = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                                drop_last=True, collate_fn=dataset_collate, sampler=val_sampler)
 
         for epoch in range(Init_Epoch, Epoch):
+            if distributed:
+                train_sampler.set_epoch(epoch)
+                
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
             
-            fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, Cuda, save_period, save_dir)
+            fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
 
-        loss_history.writer.close()
+        if local_rank == 0:
+            loss_history.writer.close()

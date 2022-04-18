@@ -3,14 +3,14 @@ import torch
 from torch import nn
 from transformers import BertModel, BertTokenizer
 
-from .vit import LayerNorm, VisionTransformer
+from .vit import VisionTransformer
 
 
 class CLIP(nn.Module):
     def __init__(self,
                  embed_dim          = 512,
                  # vision
-                 image_resolution   = 224,
+                 input_shape        = [224, 224],
                  vision_layers      = 12,
                  vision_width       = 768,
                  vision_patch_size  = 32,
@@ -23,19 +23,19 @@ class CLIP(nn.Module):
 
         vision_heads = vision_width // 64
         self.visual = VisionTransformer(
-            input_resolution    = image_resolution,
+            input_shape         = input_shape,
             patch_size          = vision_patch_size,
-            width               = vision_width,
-            layers              = vision_layers,
-            heads               = vision_heads,
-            output_dim          = embed_dim
+            num_features        = vision_width,
+            depth               = vision_layers,
+            num_heads           = vision_heads,
         )
-        self.visual.load_state_dict(torch.load("model_data/VIT-B-32-Only.pth"))
+        self.visual.load_state_dict(torch.load("model_data/vit-32.pth"), strict=False)
+        self.visual.head = nn.Linear(self.visual.num_features, embed_dim)
 
         self.tokenizer          = BertTokenizer.from_pretrained("model_data/chinese_wwm_ext_pytorch")
         self.text               = BertModel.from_pretrained("model_data/chinese_wwm_ext_pytorch")
         transformer_width       = self.text.config.hidden_size
-        self.ln_final           = LayerNorm(transformer_width)
+        self.ln_final           = nn.LayerNorm(transformer_width)
         self.text_projection    = nn.Parameter(torch.empty(transformer_width, embed_dim))
         nn.init.normal_(self.text_projection, std=transformer_width ** -0.5)
             
@@ -43,21 +43,17 @@ class CLIP(nn.Module):
 
     @property
     def dtype(self):
-        return self.visual.conv1.weight.dtype
+        return self.visual.patch_embed.proj.weight.dtype
+    
 
     def encode_image(self, image):
         return self.visual(image.type(self.dtype))
 
     def encode_text(self, text):
         x = self.tokenizer(text, return_tensors="pt", padding=True)
-        if self.visual.conv1.weight.is_cuda:
-            input_ids       = x.input_ids.cuda()
-            attention_mask  = x.attention_mask.cuda()
-            token_type_ids  = x.token_type_ids.cuda()
-        else:
-            input_ids       = x.input_ids
-            attention_mask  = x.attention_mask
-            token_type_ids  = x.token_type_ids
+        input_ids       = x.input_ids.to(self.visual.patch_embed.proj.weight.device)
+        attention_mask  = x.attention_mask.to(self.visual.patch_embed.proj.weight.device)
+        token_type_ids  = x.token_type_ids.to(self.visual.patch_embed.proj.weight.device)
         x = self.text(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids).pooler_output
         x = self.ln_final(x).type(self.dtype)
         x = x @ self.text_projection
