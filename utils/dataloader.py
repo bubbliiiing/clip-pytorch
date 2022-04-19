@@ -163,5 +163,5 @@ def dataset_collate(batch):
         captions.append(caption)
         
     images      = torch.from_numpy(np.array(images)).type(torch.FloatTensor)
-    captions    = torch.from_numpy(np.arange(len(captions))).long()
-    return images, captions
+    labels      = torch.from_numpy(np.arange(len(captions))).long()
+    return images, captions, labels

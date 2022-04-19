@@ -25,7 +25,7 @@ def fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step
     for iteration, batch in enumerate(gen):
         if iteration >= epoch_step:
             break
-        images, captions = batch
+        images, captions, labels = batch
         with torch.no_grad():
             if cuda:
                 images  = images.cuda(local_rank)
@@ -79,7 +79,7 @@ def fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step
     for iteration, batch in enumerate(gen_val):
         if iteration >= epoch_step_val:
             break
-        images, captions = batch
+        images, captions, labels = batch
         with torch.no_grad():
             if cuda:
                 images  = images.cuda(local_rank)
