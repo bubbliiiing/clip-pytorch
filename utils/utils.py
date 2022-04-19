@@ -138,5 +138,5 @@ def download_weights(model_dir="./model_data"):
     if not os.path.exists(model_dir):
         os.makedirs(model_dir)
         
-    download_zip('https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/chinese_rbt3_pytorch.zip', model_dir)
+    download_zip('https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/chinese_wwm_ext_pytorch.zip', model_dir)
     load_state_dict_from_url("https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/VIT-32.pth", model_dir)

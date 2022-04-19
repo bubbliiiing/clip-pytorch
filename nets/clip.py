@@ -33,8 +33,8 @@ class CLIP(nn.Module):
         self.visual.load_state_dict(torch.load("model_data/VIT-32.pth"), strict=False)
         self.visual.head = nn.Linear(self.visual.num_features, embed_dim)
 
-        self.tokenizer          = BertTokenizer.from_pretrained("model_data/chinese_rbt3_pytorch")
-        self.text               = BertModel.from_pretrained("model_data/chinese_rbt3_pytorch")
+        self.tokenizer          = BertTokenizer.from_pretrained("model_data/chinese_wwm_ext_pytorch")
+        self.text               = BertModel.from_pretrained("model_data/chinese_wwm_ext_pytorch")
         transformer_width       = self.text.config.hidden_size
         self.ln_final           = nn.LayerNorm(transformer_width)
         self.text_projection    = nn.Parameter(torch.empty(transformer_width, embed_dim))
