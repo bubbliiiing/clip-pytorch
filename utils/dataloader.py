@@ -10,7 +10,7 @@ from .utils_aug import RandomResizedCrop, ImageNetPolicy, CenterCrop, Resize
 
 
 class ClipDataset(data.Dataset):
-    def __init__(self, input_shape, lines, datasets_path, random, autoaugment_flag=False):
+    def __init__(self, input_shape, lines, datasets_path, random, autoaugment_flag=True):
         self.input_shape    = input_shape
         self.lines          = lines
         self.photo_names    = list(lines.keys())
