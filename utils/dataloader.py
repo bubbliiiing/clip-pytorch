@@ -2,11 +2,12 @@ import os
 
 import cv2
 import numpy as np
+import torch
 import torch.utils.data as data
 from PIL import Image
 
 from .utils import cvtColor, preprocess_input
-from .utils_aug import RandomResizedCrop, ImageNetPolicy, CenterCrop, Resize
+from .utils_aug import CenterCrop, ImageNetPolicy, RandomResizedCrop, Resize
 
 
 class ClipDataset(data.Dataset):
@@ -161,5 +162,6 @@ def dataset_collate(batch):
         images.append(image)
         captions.append(caption)
         
-    images      = np.array(images)
+    images      = torch.from_numpy(np.array(images)).type(torch.FloatTensor)
+    captions    = torch.from_numpy(np.arange(len(captions))).long()
     return images, captions

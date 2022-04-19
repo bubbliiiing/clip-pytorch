@@ -27,8 +27,9 @@ def fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step
             break
         images, captions = batch
         with torch.no_grad():
-            images  = torch.from_numpy(images).type(torch.FloatTensor).cuda()
-            labels  = torch.from_numpy(np.arange(len(captions))).long().cuda()
+            if cuda:
+                images  = images.cuda(local_rank)
+                labels  = labels.cuda(local_rank)
 
         #----------------------#
         #   清零梯度
@@ -81,11 +82,8 @@ def fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step
         images, captions = batch
         with torch.no_grad():
             if cuda:
-                images  = torch.from_numpy(images).type(torch.FloatTensor).cuda()
-                labels  = torch.from_numpy(np.arange(len(captions))).long().cuda()
-            else:
-                images  = torch.from_numpy(images).type(torch.FloatTensor)
-                labels  = torch.from_numpy(np.arange(len(captions))).long()
+                images  = images.cuda(local_rank)
+                labels  = labels.cuda(local_rank)
 
             optimizer.zero_grad()
     
