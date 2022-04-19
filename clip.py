@@ -13,7 +13,7 @@ class Clip(object):
         #-------------------------------#
         #   指向logs文件夹下的权值文件
         #-------------------------------#
-        "model_path"        : 'logs\ep002-loss1.686-val_loss1.393.pth',
+        "model_path"        : 'model_data/Clip_flickr8kcn.pth',
         #-------------------------------#
         #   特征长度
         #-------------------------------#
@@ -21,11 +21,16 @@ class Clip(object):
         #-------------------------------#
         #   输入图片的大小。
         #-------------------------------#
-        "image_resolution"  : 224,
+        "input_shape"       : [224, 224],
         #-------------------------------#
         #   文字的最大长度
         #-------------------------------#
         "context_length"    : 100,
+        #--------------------------------------------------------------------#
+        #   该变量用于控制是否使用letterbox_image对输入图像进行不失真的resize
+        #   否则对图像进行CenterCrop
+        #--------------------------------------------------------------------#
+        "letterbox_image"   : False,
         #-------------------------------#
         #   是否使用Cuda
         #   没有GPU可以设置成False
@@ -54,7 +59,7 @@ class Clip(object):
     #   生成模型
     #---------------------------------------------------#
     def generate(self):
-        self.net    = CLIP(embed_dim = self.embed_dim, image_resolution = self.image_resolution, context_length=self.context_length)
+        self.net    = CLIP(embed_dim = self.embed_dim, input_shape = self.input_shape, context_length=self.context_length)
         device      = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.net.load_state_dict(torch.load(self.model_path, map_location=device))
         self.net    = self.net.eval()
@@ -77,7 +82,7 @@ class Clip(object):
         #   给图像增加灰条，实现不失真的resize
         #   也可以直接resize进行识别
         #---------------------------------------------------------#
-        image_data  = letterbox_image(image, (self.image_resolution, self.image_resolution))
+        image_data  = letterbox_image(image, [self.input_shape[1], self.input_shape[0]], self.letterbox_image)
         #---------------------------------------------------------#
         #   添加上batch_size维度
         #---------------------------------------------------------#

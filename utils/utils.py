@@ -4,22 +4,30 @@ from functools import partial
 import numpy as np
 from PIL import Image
 
+from .utils_aug import center_crop, resize
+
 
 #---------------------------------------------------#
-#   不失真的resize
+#   对输入图像进行resize
 #---------------------------------------------------#
-def letterbox_image(image, size):
-    iw, ih  = image.size
-    w, h    = size
+def letterbox_image(image, size, letterbox_image):
+    w, h = size
+    iw, ih = image.size
+    if letterbox_image:
+        '''resize image with unchanged aspect ratio using padding'''
+        scale = min(w/iw, h/ih)
+        nw = int(iw*scale)
+        nh = int(ih*scale)
 
-    scale   = min(w/iw, h/ih)
-    nw      = int(iw*scale)
-    nh      = int(ih*scale)
-
-    image   = image.resize((nw,nh), Image.BICUBIC)
-    new_image = Image.new('RGB', size, (128,128,128))
-    new_image.paste(image, ((w-nw)//2, (h-nh)//2))
-
+        image = image.resize((nw,nh), Image.BICUBIC)
+        new_image = Image.new('RGB', size, (128,128,128))
+        new_image.paste(image, ((w-nw)//2, (h-nh)//2))
+    else:
+        if h == w:
+            new_image = resize(image, h)
+        else:
+            new_image = resize(image, [h ,w])
+        new_image = center_crop(new_image, [h ,w])
     return new_image
 
 #---------------------------------------------------#
@@ -99,3 +107,36 @@ def set_optimizer_lr(optimizer, lr_scheduler_func, epoch):
     lr = lr_scheduler_func(epoch)
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
+
+def download_weights(model_dir="./model_data"):
+    import os
+    import sys
+    import zipfile
+
+    from torch.hub import load_state_dict_from_url
+    try:
+        from urllib import urlretrieve
+    except ImportError:
+        from urllib.request import urlretrieve
+        
+    def download_zip(url, model_dir='./pretrained'):
+        if not os.path.exists(model_dir):
+            os.makedirs(model_dir)
+        filename    = url.split('/')[-1].split('.')[0]
+        cached_file = os.path.join(model_dir, filename)
+        if not os.path.exists(cached_file):
+            os.makedirs(cached_file)
+            
+            zip_file = os.path.join(model_dir, filename+'.zip')
+            sys.stderr.write('Downloading: "{}" to {}\n'.format(url, zip_file))
+            urlretrieve(url, zip_file)
+            zip_ref = zipfile.ZipFile(zip_file, 'r')
+            zip_ref.extractall(cached_file)
+            zip_ref.close()
+            os.remove(zip_file)
+            
+    if not os.path.exists(model_dir):
+        os.makedirs(model_dir)
+        
+    download_zip('https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/chinese_rbt3_pytorch.zip', model_dir)
+    load_state_dict_from_url("https://github.com/bubbliiiing/clip-pytorch/releases/download/v1.0/VIT-32.pth", model_dir)
