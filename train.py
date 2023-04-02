@@ -1,6 +1,7 @@
 import json
 import os
 
+import datetime
 import numpy as np
 import torch
 import torch.backends.cudnn as cudnn
@@ -9,10 +10,11 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 
 from nets.clip import CLIP
-from utils.callback import LossHistory
+from utils.callbacks import EvalCallback, LossHistory
 from utils.dataloader import ClipDataset, dataset_collate
-from utils.utils import get_lr_scheduler, set_optimizer_lr, download_weights
+from utils.utils import get_lr_scheduler, set_optimizer_lr, get_configs
 from utils.utils_fit import fit_one_epoch
+
 
 if __name__ == "__main__":
     #----------------------------------------#
@@ -36,7 +38,7 @@ if __name__ == "__main__":
     #   fp16        是否使用混合精度训练
     #               可减少约一半的显存、需要pytorch1.7.1以上
     #---------------------------------------------------------------------#
-    fp16                = False
+    fp16                = True
     #----------------------------------------------------------------------------------------------------------------------------#
     #   权值文件的下载请看README，可以通过网盘下载。模型的 预训练权重 对不同数据集是通用的，因为特征是通用的。
     #   模型的 预训练权重 比较重要的部分是 主干特征提取网络的权值部分，用于进行特征提取。
@@ -54,19 +56,14 @@ if __name__ == "__main__":
     #   一般来讲，网络从0开始的训练效果会很差，因为权值太过随机，特征提取效果不明显，因此非常、非常、非常不建议大家从0开始训练！
     #   如果一定要从0开始，可以了解imagenet数据集，首先训练分类模型，获得网络的主干部分权值，分类模型的 主干部分 和该模型通用，基于此进行训练。
     #----------------------------------------------------------------------------------------------------------------------------#
-    model_path          = ""
-    #----------------------------------------#
-    #   进行文本-图片特征比较时的特征长度
-    #----------------------------------------#
-    embed_dim           = 512
-    #----------------------------------------#
-    #   输入图片的大小
-    #----------------------------------------#
-    input_shape         = [224, 224]
-    #----------------------------------------#
-    #   训练集最长的文本长度
-    #----------------------------------------#
-    context_length      = 100 
+    model_path          = "model_data/ViT-B-32-OpenAI.pth"
+    #-------------------------------#
+    #   模型的种类
+    #   openai/VIT-B-16
+    #   openai/VIT-B-16
+    #   self-cn/VIT-B-32
+    #-------------------------------#
+    phi                 = "openai/VIT-B-32"
 
     #----------------------------------------------------------------------------------------------------------------------------#
     #   显存不足与数据集大小无关，提示显存不足请调小batch_size。
@@ -90,7 +87,7 @@ if __name__ == "__main__":
     #   batch_size      每次输入的图片数量
     #   Epoch           模型总共训练的epoch
     #------------------------------------------------------#
-    batch_size      = 32
+    batch_size      = 64
     Init_Epoch      = 0
     Epoch           = 100
     
@@ -125,6 +122,17 @@ if __name__ == "__main__":
     #------------------------------------------------------------------#
     save_dir            = 'logs'
     #------------------------------------------------------------------#
+    #   eval_flag       是否在训练时进行评估，评估对象为验证集
+    #                   安装pycocotools库后，评估体验更佳。
+    #   eval_period     代表多少个epoch评估一次，不建议频繁的评估
+    #                   评估需要消耗较多的时间，频繁评估会导致训练非常慢
+    #   此处获得的mAP会与get_map.py获得的会有所不同，原因有二：
+    #   （一）此处获得的mAP为验证集的mAP。
+    #   （二）此处设置评估参数较为保守，目的是加快评估速度。
+    #------------------------------------------------------------------#
+    eval_flag           = True
+    eval_period         = 1
+    #------------------------------------------------------------------#
     #   num_workers     用于设置是否使用多线程读取数据，1代表关闭多线程
     #                   开启后会加快数据读取速度，但是会占用更多内存
     #                   在IO为瓶颈的时候再开启多线程，即GPU运算速度远大于读取图片的速度。
@@ -132,10 +140,13 @@ if __name__ == "__main__":
     num_workers         = 4
     
     #------------------------------------------------------#
-    #   train_annotation_path   训练图片路径和标签
-    #   test_annotation_path    验证图片路径和标签
+    #   datasets_train_json_path   训练图片路径和标签
+    #   datasets_val_json_path    验证图片路径和标签
     #------------------------------------------------------#
-    datasets_path       = "datasets"
+    datasets_path               = "datasets/"
+    datasets_train_json_path    = "datasets/en_train.json"
+    datasets_val_json_path      = "datasets/en_val.json"
+    datasets_random             = False          
     
     #------------------------------------------------------#
     #   设置用到的显卡
@@ -153,33 +164,42 @@ if __name__ == "__main__":
         device          = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         local_rank      = 0
         rank            = 0
-
-    if distributed:
-        if local_rank == 0:
-            download_weights()  
-        dist.barrier()
-    else:
-        download_weights()
     
-    model = CLIP(
-        embed_dim           = 512, 
-        input_shape         = input_shape, 
-        context_length      = context_length,
-    )
+    config  = get_configs(phi)
+    model   = CLIP(**config)
     if model_path != '':
+        #------------------------------------------------------#
+        #   权值文件请看README，百度网盘下载
+        #------------------------------------------------------#
         if local_rank == 0:
-            #------------------------------------------------------#
-            #   权值文件请看README，百度网盘下载
-            #------------------------------------------------------#
             print('Load weights {}.'.format(model_path))
+        
+        #------------------------------------------------------#
+        #   根据预训练权重的Key和模型的Key进行加载
+        #------------------------------------------------------#
         model_dict      = model.state_dict()
         pretrained_dict = torch.load(model_path, map_location = device)
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if np.shape(model_dict[k]) == np.shape(v)}
-        model_dict.update(pretrained_dict)
+        load_key, no_load_key, temp_dict = [], [], {}
+        for k, v in pretrained_dict.items():
+            if k in model_dict.keys() and np.shape(model_dict[k]) == np.shape(v):
+                temp_dict[k] = v
+                load_key.append(k)
+            else:
+                no_load_key.append(k)
+        model_dict.update(temp_dict)
         model.load_state_dict(model_dict)
+        #------------------------------------------------------#
+        #   显示没有匹配上的Key
+        #------------------------------------------------------#
+        if local_rank == 0:
+            print("\nSuccessful Load Key:", str(load_key)[:500], "……\nSuccessful Load Key Num:", len(load_key))
+            print("\nFail To Load Key:", str(no_load_key)[:500], "……\nFail To Load Key num:", len(no_load_key))
+            print("\n\033[1;33;44m温馨提示，head部分没有载入是正常现象，Backbone部分没有载入是错误的。\033[0m")
     
     if local_rank == 0:
-        loss_history = LossHistory(save_dir, model, input_shape=input_shape)
+        time_str        = datetime.datetime.strftime(datetime.datetime.now(),'%Y_%m_%d_%H_%M_%S')
+        log_dir         = os.path.join(save_dir, "loss_" + str(time_str))
+        loss_history    = LossHistory(log_dir, model, None)
     else:
         loss_history = None
         
@@ -206,8 +226,8 @@ if __name__ == "__main__":
             cudnn.benchmark = True
             model_train = model_train.cuda()
         
-    train_lines = json.load(open(os.path.join(datasets_path, "train.json"), mode = 'r', encoding = 'utf-8'))
-    val_lines   = json.load(open(os.path.join(datasets_path, "val.json"), mode = 'r', encoding = 'utf-8'))
+    train_lines = json.load(open(datasets_train_json_path, mode = 'r', encoding = 'utf-8'))
+    val_lines   = json.load(open(datasets_val_json_path, mode = 'r', encoding = 'utf-8'))
     
     num_train   = len(train_lines)
     num_val     = len(val_lines)
@@ -247,8 +267,8 @@ if __name__ == "__main__":
         #---------------------------------------#
         #   构建数据集加载器
         #---------------------------------------#
-        train_dataset   = ClipDataset(input_shape, train_lines, datasets_path, random = True)
-        val_dataset     = ClipDataset(input_shape, val_lines, datasets_path, random = False)
+        train_dataset   = ClipDataset([config['input_resolution'], config['input_resolution']], train_lines, datasets_path, random = datasets_random)
+        val_dataset     = ClipDataset([config['input_resolution'], config['input_resolution']], val_lines, datasets_path, random = False)
         
         if distributed:
             train_sampler   = torch.utils.data.distributed.DistributedSampler(train_dataset, shuffle=True,)
@@ -262,8 +282,17 @@ if __name__ == "__main__":
 
         gen             = DataLoader(train_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
                                 drop_last=True, collate_fn=dataset_collate, sampler=train_sampler)
-        gen_val         = DataLoader(val_dataset, shuffle=shuffle, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
-                                drop_last=True, collate_fn=dataset_collate, sampler=val_sampler)
+        gen_val         = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                                drop_last=False, collate_fn=dataset_collate, sampler=val_sampler)
+
+        #----------------------#
+        #   记录eval的map曲线
+        #----------------------#
+        if local_rank == 0:
+            eval_callback   = EvalCallback(model, gen_val, log_dir, Cuda, \
+                                            eval_flag=eval_flag, period=eval_period)
+        else:
+            eval_callback   = None
 
         for epoch in range(Init_Epoch, Epoch):
             if distributed:
@@ -271,7 +300,8 @@ if __name__ == "__main__":
                 
             set_optimizer_lr(optimizer, lr_scheduler_func, epoch)
             
-            fit_one_epoch(model_train, model, loss_history, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, Cuda, fp16, scaler, save_period, save_dir, local_rank)
+            fit_one_epoch(model_train, model, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, Cuda, \
+                          fp16, scaler, save_period, save_dir, local_rank)
 
         if local_rank == 0:
             loss_history.writer.close()

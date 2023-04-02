@@ -4,13 +4,19 @@
 #-----------------------------------------------------------------------#
 from PIL import Image
 
-from clip import Clip
+from clip import CLIP
 
 if __name__ == "__main__":
     clip = Clip()
     
     image_path = "img/2090545563_a4e66ec76b.jpg"
-    captions   = ["两个孩子在滑板上快乐地滑行。", "一位女士通过一个障碍的过程，而其他人都在后台。", "一只白色的狗正看着一只黑色的狗在一堆大石头旁边的草地上跳跃。", "一个户外溜冰场挤满了人。"]
+    captions   = [
+        "The two children glided happily on the skateboard.", 
+        "A woman walks through a barrier while everyone else is backstage.", 
+        "A white dog was watching a black dog jump on the grass next to a pile of big stones.", 
+        "An outdoor skating rink was crowded with people."
+    ]
     
     image = Image.open(image_path)
-    clip.detect_image(image, captions)
+    probs = clip.detect_image(image, captions)
+    print("Label probs:", probs)

@@ -6,7 +6,7 @@ import torch
 import torch.utils.data as data
 from PIL import Image
 
-from .utils import cvtColor, preprocess_input
+from .utils import cvtColor, preprocess_input, pre_caption
 from .utils_aug import CenterCrop, ImageNetPolicy, RandomResizedCrop, Resize
 
 
@@ -14,9 +14,23 @@ class ClipDataset(data.Dataset):
     def __init__(self, input_shape, lines, datasets_path, random, autoaugment_flag=True):
         self.input_shape    = input_shape
         self.lines          = lines
-        self.photo_names    = list(lines.keys())
+
         self.random         = random
         self.datasets_path  = datasets_path
+
+        self.text       = []
+        self.image      = []
+        self.txt2img    = {}
+        self.img2txt    = {}
+        txt_id          = 0
+        for img_id, ann in enumerate(self.lines):
+            self.image.append(ann['image'])
+            self.img2txt[img_id] = []
+            for i, caption in enumerate(ann['caption']):
+                self.text.append(pre_caption(caption, 77))
+                self.img2txt[img_id].append(txt_id)
+                self.txt2img[txt_id] = img_id
+                txt_id += 1
 
         self.autoaugment_flag   = autoaugment_flag
         if self.autoaugment_flag:
@@ -33,9 +47,9 @@ class ClipDataset(data.Dataset):
         return np.random.rand()*(b-a) + a
 
     def __getitem__(self, index):
-        photo_name  = self.photo_names[index]
-        image_path  = os.path.join(self.datasets_path, "JPEGImages", photo_name)
-        caption     = np.random.choice(self.lines[photo_name])
+        photo_name  = self.image[index]
+        image_path  = os.path.join(self.datasets_path, photo_name)
+        caption     = self.text[np.random.choice(self.img2txt[index])]
         
         image       = Image.open(image_path)
         #------------------------------#
@@ -163,5 +177,4 @@ def dataset_collate(batch):
         captions.append(caption)
         
     images      = torch.from_numpy(np.array(images)).type(torch.FloatTensor)
-    labels      = torch.from_numpy(np.arange(len(captions))).long()
-    return images, captions, labels
+    return images, captions
