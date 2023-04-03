@@ -57,10 +57,10 @@ class CLIP(nn.Module):
         elif bert_type == "huggingface":
             self.tokenizer          = BertTokenizer.from_pretrained(kwargs['huggingface_model_name'])
             self.transformer        = BertModel.from_pretrained(kwargs['huggingface_model_name'])
-            transformer_width       = self.text.config.hidden_size
-            nn.init.normal_(self.text_projection, std=transformer_width ** -0.5)
+            transformer_width       = self.transformer.config.hidden_size
 
         self.text_projection        = nn.Parameter(torch.empty(transformer_width, embed_dim))
+        nn.init.normal_(self.text_projection, std=transformer_width ** -0.5)
         self.ln_final               = nn.LayerNorm(transformer_width)
         self.logit_scale            = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
@@ -94,10 +94,10 @@ class CLIP(nn.Module):
 
         elif self.bert_type == "huggingface":
             x = self.tokenizer(text, return_tensors="pt", padding=True)
-            input_ids       = x.input_ids.to(self.visual.patch_embed.proj.weight.device)
-            attention_mask  = x.attention_mask.to(self.visual.patch_embed.proj.weight.device)
-            token_type_ids  = x.token_type_ids.to(self.visual.patch_embed.proj.weight.device)
-            x = self.text(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids).pooler_output
+            input_ids       = x.input_ids.to(self.visual.conv1.weight.device)
+            attention_mask  = x.attention_mask.to(self.visual.conv1.weight.device)
+            token_type_ids  = x.token_type_ids.to(self.visual.conv1.weight.device)
+            x = self.transformer(input_ids=input_ids, attention_mask=attention_mask, token_type_ids=token_type_ids).pooler_output
             x = self.ln_final(x).type(self.dtype)
             x = x @ self.text_projection
 

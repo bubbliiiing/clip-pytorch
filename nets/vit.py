@@ -58,10 +58,27 @@ class VisionTransformer(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.output_dim = output_dim
+        #-----------------------------------------------#
+        #   224, 224, 3 -> 196, 768
+        #-----------------------------------------------#
         self.conv1 = nn.Conv2d(in_channels=3, out_channels=width, kernel_size=patch_size, stride=patch_size, bias=False)
 
         scale = width ** -0.5
+        #--------------------------------------------------------------------------------------------------------------------#
+        #   class_embedding部分是transformer的分类特征。用于堆叠到序列化后的图片特征中，作为一个单位的序列特征进行特征提取。
+        #
+        #   在利用步长为16x16的卷积将输入图片划分成14x14的部分后，将14x14部分的特征平铺，一幅图片会存在序列长度为196的特征。
+        #   此时生成一个class_embedding，将class_embedding堆叠到序列长度为196的特征上，获得一个序列长度为197的特征。
+        #   在特征提取的过程中，class_embedding会与图片特征进行特征的交互。最终分类时，我们取出class_embedding的特征，利用全连接分类。
+        #--------------------------------------------------------------------------------------------------------------------#
+        #   196, 768 -> 197, 768
         self.class_embedding = nn.Parameter(scale * torch.randn(width))
+        #--------------------------------------------------------------------------------------------------------------------#
+        #   为网络提取到的特征添加上位置信息。
+        #   以输入图片为224, 224, 3为例，我们获得的序列化后的图片特征为196, 768。加上class_embedding后就是197, 768
+        #   此时生成的pos_Embedding的shape也为197, 768，代表每一个特征的位置信息。
+        #--------------------------------------------------------------------------------------------------------------------#
+        #   197, 768 -> 197, 768
         self.positional_embedding = nn.Parameter(scale * torch.randn((input_resolution // patch_size) ** 2 + 1, width))
         self.ln_pre = LayerNorm(width)
 

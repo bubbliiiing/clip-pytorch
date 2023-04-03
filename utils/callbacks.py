@@ -142,9 +142,9 @@ class EvalCallback():
             
             plt.figure()
             plt.plot(self.epoches, self.txt_r1, 'red', linewidth = 2, label='txt_r1')
-            plt.plot(self.epoches, self.txt_r5, 'red', linewidth = 2, label='txt_r5')
-            plt.plot(self.epoches, self.img_r1, 'red', linewidth = 2, label='img_r1')
-            plt.plot(self.epoches, self.img_r5, 'red', linewidth = 2, label='img_r5')
+            plt.plot(self.epoches, self.txt_r5, 'green', linewidth = 2, label='txt_r5')
+            plt.plot(self.epoches, self.img_r1, 'blue', linewidth = 2, label='img_r1')
+            plt.plot(self.epoches, self.img_r5, 'pink', linewidth = 2, label='img_r5')
 
             plt.grid(True)
             plt.xlabel('Epoch')
