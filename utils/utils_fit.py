@@ -1,3 +1,4 @@
+import math
 import os
 from copy import deepcopy
 
@@ -6,8 +7,8 @@ import torch
 import torch.nn as nn
 from tqdm import tqdm
 
+from .callbacks import de_parallel
 from .utils import get_lr
-from .metrics import itm_eval
 
 
 def fit_one_epoch(model_train, model, loss_history, eval_callback, optimizer, epoch, epoch_step, epoch_step_val, gen, gen_val, Epoch, cuda, fp16, scaler, save_period, save_dir, local_rank=0):
@@ -61,6 +62,9 @@ def fit_one_epoch(model_train, model, loss_history, eval_callback, optimizer, ep
             scaler.update()
             
         total_loss += loss.item()
+
+        with torch.no_grad():
+            de_parallel(model_train).logit_scale.clamp_(0, math.log(100))
 
         if local_rank == 0:
             pbar.set_postfix(**{'total_loss'            : total_loss / (iteration + 1), 

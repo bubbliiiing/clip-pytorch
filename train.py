@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 
@@ -12,7 +13,8 @@ from torch.utils.data import DataLoader
 from nets.clip import CLIP
 from utils.callbacks import EvalCallback, LossHistory
 from utils.dataloader import ClipDataset, dataset_collate
-from utils.utils import get_lr_scheduler, set_optimizer_lr, get_configs
+from utils.utils import (get_configs, get_lr_scheduler, set_optimizer_lr,
+                         show_config)
 from utils.utils_fit import fit_one_epoch
 
 
@@ -38,7 +40,7 @@ if __name__ == "__main__":
     #   fp16        是否使用混合精度训练
     #               可减少约一半的显存、需要pytorch1.7.1以上
     #---------------------------------------------------------------------#
-    fp16                = True
+    fp16                = False
     #----------------------------------------------------------------------------------------------------------------------------#
     #   权值文件的下载请看README，可以通过网盘下载。模型的 预训练权重 对不同数据集是通用的，因为特征是通用的。
     #   模型的 预训练权重 比较重要的部分是 主干特征提取网络的权值部分，用于进行特征提取。
@@ -50,20 +52,19 @@ if __name__ == "__main__":
     #   当model_path = ''的时候不加载整个模型的权值。
     #
     #   此处使用的是整个模型的权重，因此是在train.py进行加载的。
-    #   如果想要让模型从主干的预训练权值开始训练，则设置model_path为主干网络的权值，此时仅加载主干。
-    #   如果想要让模型从0开始训练，则设置model_path = ''，Freeze_Train = Fasle，此时从0开始训练，且没有冻结主干的过程。
-    #   
     #   一般来讲，网络从0开始的训练效果会很差，因为权值太过随机，特征提取效果不明显，因此非常、非常、非常不建议大家从0开始训练！
     #   如果一定要从0开始，可以了解imagenet数据集，首先训练分类模型，获得网络的主干部分权值，分类模型的 主干部分 和该模型通用，基于此进行训练。
     #----------------------------------------------------------------------------------------------------------------------------#
     model_path          = "model_data/ViT-B-32-OpenAI.pth"
     #-------------------------------#
     #   模型的种类
-    #   openai/VIT-B-16
-    #   openai/VIT-B-16
-    #   self-cn/VIT-B-32
+    #   openai/VIT-B-16     为openai公司开源的CLIP模型中，VIT-B-16规模的CLIP模型，英文文本与图片匹配，有公开预训练权重可用。
+    #   openai/VIT-B-32     为openai公司开源的CLIP模型中，VIT-B-32规模的CLIP模型，英文文本与图片匹配，有公开预训练权重可用。
+    #   self-cn/VIT-B-32    为自实现的模型，VIT-B-32规模的CLIP模型，英文文本与图片匹配，中文文本与图片匹配，无公开预训练权重可用，
+    #                       可以使用openai/VIT-B-32的Image Encoder初始化视觉部分，使用huggingface的bert-base-chinese初始化文本部分，
+    #                       进行训练时，model_path设置为model_data/ViT-B-32-OpenAI.pth即可。huggingface的bert-base-chinese会自动进行下载。
     #-------------------------------#
-    phi                 = "openai/VIT-B-32"
+    phi                 = "self-cn/VIT-B-32"
 
     #----------------------------------------------------------------------------------------------------------------------------#
     #   显存不足与数据集大小无关，提示显存不足请调小batch_size。
@@ -87,7 +88,7 @@ if __name__ == "__main__":
     #   batch_size      每次输入的图片数量
     #   Epoch           模型总共训练的epoch
     #------------------------------------------------------#
-    batch_size      = 64
+    batch_size      = 128
     Init_Epoch      = 0
     Epoch           = 100
     
@@ -146,7 +147,7 @@ if __name__ == "__main__":
     datasets_path               = "datasets/"
     datasets_train_json_path    = "datasets/en_train.json"
     datasets_val_json_path      = "datasets/en_val.json"
-    datasets_random             = False          
+    datasets_random             = True
     
     #------------------------------------------------------#
     #   设置用到的显卡
@@ -232,6 +233,14 @@ if __name__ == "__main__":
     num_train   = len(train_lines)
     num_val     = len(val_lines)
 
+    if local_rank == 0:
+        show_config(
+            model_path = model_path, phi = phi, \
+            Init_Epoch = Init_Epoch, Epoch = Epoch, batch_size = batch_size, \
+            Init_lr = Init_lr, Min_lr = Min_lr, optimizer_type = optimizer_type, momentum = momentum, lr_decay_type = lr_decay_type, \
+            save_period = save_period, save_dir = save_dir, num_workers = num_workers, num_train = num_train, num_val = num_val
+        )
+        
     if True:
         #-------------------------------------------------------------------#
         #   判断当前batch_size，自适应调整学习率
@@ -289,7 +298,10 @@ if __name__ == "__main__":
         #   记录eval的map曲线
         #----------------------#
         if local_rank == 0:
-            eval_callback   = EvalCallback(model, gen_val, log_dir, Cuda, \
+            eval_dataset    = ClipDataset([config['input_resolution'], config['input_resolution']], val_lines, datasets_path, random = False)
+            gen_eval        = DataLoader(eval_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
+                                    drop_last=False, collate_fn=dataset_collate, sampler=None)
+            eval_callback   = EvalCallback(model, gen_eval, log_dir, Cuda, \
                                             eval_flag=eval_flag, period=eval_period)
         else:
             eval_callback   = None

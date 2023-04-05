@@ -31,15 +31,6 @@ def letterbox_image(image, size, letterbox_image):
         new_image = center_crop(new_image, [h ,w])
     return new_image
 
-#---------------------------------------------------#
-#   获得类
-#---------------------------------------------------#
-def get_classes(classes_path):
-    with open(classes_path, encoding='utf-8') as f:
-        class_names = f.readlines()
-    class_names = [c.strip() for c in class_names]
-    return class_names, len(class_names)
-
 #---------------------------------------------------------#
 #   将图像转换成RGB图像，防止灰度图在预测时报错。
 #   代码仅仅支持RGB图像的预测，所有其它类型的图像都会转化成RGB
@@ -185,6 +176,14 @@ def set_optimizer_lr(optimizer, lr_scheduler_func, epoch):
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
 
+def show_config(**kwargs):
+    print('Configurations:')
+    print('-' * 70)
+    print('|%25s | %40s|' % ('keys', 'values'))
+    print('-' * 70)
+    for key, value in kwargs.items():
+        print('|%25s | %40s|' % (str(key), str(value)))
+    print('-' * 70)
 # def download_weights(model_dir="./model_data"):
 #     import os
 #     import sys

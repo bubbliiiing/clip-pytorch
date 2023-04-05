@@ -12,24 +12,27 @@ from utils.metrics import itm_eval
 
 if __name__ == "__main__":
     #------------------------------------------------------#
-    #   train_annotation_path   训练图片路径和标签
-    #   test_annotation_path    验证图片路径和标签
+    #   datasets_path           数据集路径
+    #   datasets_val_json_path  验证样本的标签
+    #   batch_size              验证的batch_size
     #------------------------------------------------------#
     datasets_path               = "datasets/"
-    datasets_val_json_path      = "datasets/en_val.json"
-    batch_size                  = 32
+    datasets_val_json_path      = "datasets/cn_val.json"
+    batch_size                  = 64
     num_workers                 = 4
 
-    val_lines   = json.load(open(datasets_val_json_path, mode = 'r', encoding = 'utf-8'))
-    
-    num_val     = len(val_lines)
-
+    # 创建模型
     model       = CLIP()
-    val_dataset = ClipDataset([model.config['input_resolution'], model.config['input_resolution']], val_lines, datasets_path, random = False)
 
+    # 计算样本数
+    val_lines   = json.load(open(datasets_val_json_path, mode = 'r', encoding = 'utf-8'))
+    num_val     = len(val_lines)
+    # 创建数据集
+    val_dataset = ClipDataset([model.config['input_resolution'], model.config['input_resolution']], val_lines, datasets_path, random = False)
     gen_val     = DataLoader(val_dataset, shuffle=False, batch_size=batch_size, num_workers=num_workers, pin_memory=True,
                             drop_last=False, collate_fn=dataset_collate, sampler=None)
 
+    # 获得视觉特征和文本特征
     i_features = []
     t_features = []
     for iteration, batch in tqdm(enumerate(gen_val)):

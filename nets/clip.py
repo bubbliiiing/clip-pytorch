@@ -1,11 +1,10 @@
 import numpy as np
 import torch
-from torchvision import models
 from torch import nn
 from transformers import BertModel, BertTokenizer
 
-from .simple_tokenizer import SimpleTokenizer, tokenize
 from .bert import Transformer
+from .simple_tokenizer import SimpleTokenizer, tokenize
 from .vit import VisionTransformer
 
 
